@@ -4,7 +4,7 @@ import streamlit as st
 import requests
 
 BASE_URL = "https://arkpal1101-docinsight.hf.space"
-st.title("📄 DocLens — Your Document Assistant")
+st.title("📄 DocInsights — Your Document Assistant")
 
 upload_flag = False
 uploaded_files = st.file_uploader("Upload PDFs", type=["pdf"], accept_multiple_files=True)
