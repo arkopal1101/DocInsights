@@ -3,7 +3,7 @@
 import streamlit as st
 import requests
 
-BASE_URL = "http://localhost:8000"
+BASE_URL = "https://arkpal1101-docinsight.hf.space"
 st.title("📄 DocLens — Your Document Assistant")
 
 upload_flag = False
