@@ -18,6 +18,9 @@ if uploaded_files and st.button("Upload to Backend"):
         else:
             st.error(f"Upload failed: {res.text}")
 
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
+
 question = st.text_input("Ask a question about the documents:")
 
 if st.button("Ask") or question:
@@ -25,6 +28,10 @@ if st.button("Ask") or question:
         res = requests.post(f"{BASE_URL}/ask", json={"question": question})
         if res.status_code == 200:
             result = res.json()
+            st.session_state.chat_history.append({
+                "question": question,
+                "answer": result["answer"]
+            })
             st.markdown("💡 Answer:")
             st.write(result['answer'])
 
@@ -39,3 +46,17 @@ if st.button("Ask") or question:
 
         else:
             st.error("Error getting answer from backend")
+
+with st.sidebar:
+    with st.expander("### 📝 Last 3 Questions"):
+        for turn in st.session_state.chat_history[-3:]:
+            st.write(f"Q: {turn['question']}")
+
+# Then at the very end:
+with st.sidebar:
+    for i in range(38):
+        st.write("")
+    st.markdown("---")  # optional separator
+    if st.button("🔄 Reset Session", key="reset_button"):
+        st.session_state.clear()
+        st.rerun()
