@@ -1,4 +1,5 @@
 # frontend/streamlit_app.py
+import uuid
 
 import streamlit as st
 import requests
@@ -6,15 +7,23 @@ import requests
 BASE_URL = "https://arkpal1101-docinsight.hf.space"
 st.title("📄 DocInsights — Your Document Assistant")
 
-upload_flag = False
-uploaded_files = st.file_uploader("Upload PDFs", type=["pdf"], accept_multiple_files=True)
-if uploaded_files and st.button("Upload to Backend"):
+if "uploaded_files" not in st.session_state:
+    st.session_state.uploaded_files = []
+if "last_answer" not in st.session_state:
+    st.session_state.last_answer = ""
+if "session_id" not in st.session_state:
+    st.session_state.session_id = str(uuid.uuid4())
+if "upload_flag" not in st.session_state:
+    st.session_state.upload_flag = False
+
+st.session_state.uploaded_files = st.file_uploader("Upload PDFs", type=["pdf"], accept_multiple_files=True)
+if st.session_state.uploaded_files and st.button("Upload to Backend"):
     with st.spinner("Uploading PDFs..."):
-        files = [("files", (f.name, f.getvalue(), f.type)) for f in uploaded_files]
-        res = requests.post(f"{BASE_URL}/upload_pdfs", files=files)
+        files = [("files", (f.name, f.getvalue(), f.type)) for f in st.session_state.uploaded_files]
+        res = requests.post(f"{BASE_URL}/upload_pdfs", params={"session_id": st.session_state.session_id}, files=files)
         if res.status_code == 200:
-            upload_flag = True
             st.success("✅ PDFs uploaded and processed!")
+            st.session_state.upload_flag = True
         else:
             st.error(f"Upload failed: {res.text}")
 
@@ -22,18 +31,23 @@ if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
 question = st.text_input("Ask a question about the documents:")
+go_label = "Go" if st.session_state.upload_flag else "🔒 Upload PDFs First"
+button = st.button(go_label, disabled=not st.session_state.upload_flag)
 
-if st.button("Ask") or question:
+if button and question:
     with st.spinner("🤔 Thinking..."):
-        res = requests.post(f"{BASE_URL}/ask", json={"question": question})
+        res = requests.post(f"{BASE_URL}/ask",
+                            json={"session_id": st.session_state.session_id, "question": question})
         if res.status_code == 200:
             result = res.json()
             st.session_state.chat_history.append({
                 "question": question,
                 "answer": result["answer"]
             })
-            st.markdown("💡 Answer:")
-            st.write(result['answer'])
+            st.session_state.last_answer = result['answer']
+            if st.session_state.last_answer:
+                st.markdown("💡 Answer:")
+                st.write(st.session_state.last_answer)
 
             with st.expander("📚 Sources"):
                 for src in result["sources"]:
@@ -59,4 +73,5 @@ with st.sidebar:
     st.markdown("---")  # optional separator
     if st.button("🔄 Reset Session", key="reset_button"):
         st.session_state.clear()
+        st.session_state["session_id"] = str(uuid.uuid4())
         st.rerun()

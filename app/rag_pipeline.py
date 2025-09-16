@@ -3,16 +3,15 @@ from langchain_core.prompts import PromptTemplate
 from langchain_core.runnables import RunnablePassthrough, RunnableLambda, RunnableParallel
 from langchain_core.output_parsers import StrOutputParser
 
-from app.helpers import load_model, load_memory, format_sources
+from app.helpers import load_model, format_sources
 
 
 # import your retrievers/reranker setup here...
 
 def build_rag_pipeline():
     model = load_model()
-    summary_memory = load_memory(model)
 
-    return model, summary_memory
+    return model
 
 
 def answer_question(question: str, retriever, model, memory):
