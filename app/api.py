@@ -4,6 +4,7 @@ import shutil
 import tempfile
 import time
 
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from langchain_community.document_loaders import PyPDFDirectoryLoader
 from langchain.retrievers import EnsembleRetriever
@@ -12,8 +13,6 @@ from pydantic import BaseModel
 
 from app.rag_pipeline import build_rag_pipeline, answer_question
 from app.helpers import text_split, load_embedder, build_vectorstore, load_reranker, load_memory
-
-app = FastAPI()
 
 SESSION_DIR_TTL = 3600
 SESSION_STORAGE_DIR = os.path.join(tempfile.gettempdir(), "docinsights_sessions")
@@ -45,16 +44,25 @@ def cleanup_stale_sessions():
             session_memory.pop(entry, None)
 
 
-@app.on_event("startup")
-async def schedule_session_cleanup():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     cleanup_stale_sessions()
 
     async def periodic_cleanup():
         while True:
             cleanup_stale_sessions()
             await asyncio.sleep(SESSION_DIR_TTL)
+            cleanup_stale_sessions()
 
-    asyncio.create_task(periodic_cleanup())
+    cleanup_task = asyncio.create_task(periodic_cleanup())
+    try:
+        yield
+    finally:
+        cleanup_task.cancel()
+        try:
+            await cleanup_task
+        except asyncio.CancelledError:
+            pass
 
 
 class QuestionRequest(BaseModel):
@@ -67,6 +75,7 @@ class UploadRequest(BaseModel):
 
 
 llm = build_rag_pipeline()
+app = FastAPI(lifespan=lifespan)
 
 
 @app.post("/upload_pdfs")
