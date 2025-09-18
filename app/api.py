@@ -1,6 +1,10 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException
-import tempfile
+import asyncio
 import os
+import shutil
+import tempfile
+import time
+
+from fastapi import FastAPI, UploadFile, File, HTTPException
 from langchain_community.document_loaders import PyPDFDirectoryLoader
 from langchain.retrievers import EnsembleRetriever
 from langchain_community.retrievers import BM25Retriever
@@ -11,8 +15,46 @@ from app.helpers import text_split, load_embedder, build_vectorstore, load_reran
 
 app = FastAPI()
 
+SESSION_DIR_TTL = 3600
+SESSION_STORAGE_DIR = os.path.join(tempfile.gettempdir(), "docinsights_sessions")
+os.makedirs(SESSION_STORAGE_DIR, exist_ok=True)
+
 session_retrievers = {}
 session_memory = {}
+
+
+def cleanup_stale_sessions():
+    """Remove session directories and in-memory data that have gone stale."""
+    if not os.path.isdir(SESSION_STORAGE_DIR):
+        return
+
+    now = time.time()
+    for entry in os.listdir(SESSION_STORAGE_DIR):
+        session_path = os.path.join(SESSION_STORAGE_DIR, entry)
+        if not os.path.isdir(session_path):
+            continue
+
+        try:
+            last_modified = os.path.getmtime(session_path)
+        except OSError:
+            continue
+
+        if now - last_modified > SESSION_DIR_TTL:
+            shutil.rmtree(session_path, ignore_errors=True)
+            session_retrievers.pop(entry, None)
+            session_memory.pop(entry, None)
+
+
+@app.on_event("startup")
+async def schedule_session_cleanup():
+    cleanup_stale_sessions()
+
+    async def periodic_cleanup():
+        while True:
+            cleanup_stale_sessions()
+            await asyncio.sleep(SESSION_DIR_TTL)
+
+    asyncio.create_task(periodic_cleanup())
 
 
 class QuestionRequest(BaseModel):
@@ -29,13 +71,19 @@ llm = build_rag_pipeline()
 
 @app.post("/upload_pdfs")
 async def upload_pdfs(session_id: str, files: list[UploadFile] = File(...)):
-    temp_dir = tempfile.mkdtemp()
+    cleanup_stale_sessions()
+
+    session_dir = os.path.join(SESSION_STORAGE_DIR, session_id)
+    if os.path.isdir(session_dir):
+        shutil.rmtree(session_dir, ignore_errors=True)
+    os.makedirs(session_dir, exist_ok=True)
+
     for file in files:
-        file_path = os.path.join(temp_dir, file.filename)
+        file_path = os.path.join(session_dir, file.filename)
         with open(file_path, "wb") as f:
             f.write(await file.read())
 
-    loader = PyPDFDirectoryLoader(path=temp_dir)
+    loader = PyPDFDirectoryLoader(path=session_dir)
     docs = loader.load()
 
     text_splitter = text_split()
@@ -57,6 +105,8 @@ async def upload_pdfs(session_id: str, files: list[UploadFile] = File(...)):
 
     session_retrievers[session_id] = retriever
 
+    os.utime(session_dir, None)
+
     if session_id not in session_memory:
         session_memory[session_id] = load_memory(llm)
 
@@ -69,4 +119,7 @@ def ask_question(req: QuestionRequest):
     memory = session_memory.get(req.session_id)
     if retriever is None:
         raise HTTPException(status_code=400, detail="No PDFs uploaded yet for this session_id")
+    session_dir = os.path.join(SESSION_STORAGE_DIR, req.session_id)
+    if os.path.isdir(session_dir):
+        os.utime(session_dir, None)
     return answer_question(req.question, retriever, llm, memory)
